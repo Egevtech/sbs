@@ -156,6 +156,10 @@ fn main() {
         }
     }
 
+    if args.command != Command::Install {
+        println!("Finished");
+        exit(0);
+    }
     println!("[100%] Installing targets...");
 
     let command = targets
