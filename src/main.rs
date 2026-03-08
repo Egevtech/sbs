@@ -121,6 +121,8 @@ fn main() {
         }
     });
 
+    let mut targets: Vec<(String, String)> = vec![];
+
     for (index, target) in project.targets.iter().enumerate() {
         let output_file = if target.r#type == Some("binary".to_string()) {
             target.name.clone()
@@ -138,26 +140,36 @@ fn main() {
 
         build_target(target, output_file.clone());
 
-        println!(
-            "[{}%] Built target {} ({}/{})",
-            ((1f32 + index as f32) / project.targets.len() as f32 * 100f32) as i32,
-            target.name,
-            index + 1,
-            project.targets.len()
-        );
-
-        if args.command == Command::Install {
-            fs::copy(
-                format!("build/{}", output_file),
+        if args.command == Command::Install && !target.install_directory.is_none() {
+            targets.push((
+                std::fs::canonicalize(format!("build/{}", output_file))
+                    .expect("Path resolution error")
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
                 format!(
                     "{}/{}",
                     target.install_directory.clone().unwrap(),
                     output_file
                 ),
-            )
-            .expect("Failed to install file");
+            ));
         }
     }
+
+    println!("[100%] Installing targets...");
+
+    let command = targets
+        .iter_mut()
+        .map(|(target, dest)| format!("cp {} {}", target, dest))
+        .collect::<Vec<_>>()
+        .join(" && ");
+
+    process::Command::new("pkexec")
+        .args(["sh", "-c", command.as_str()])
+        .status()
+        .expect("Failed to install files");
+
+    println!("Finished");
 }
 
 fn build_target(target: &Target, output_file: String) -> () {
@@ -175,8 +187,6 @@ fn build_target(target: &Target, output_file: String) -> () {
             )
         })
         .collect::<Vec<String>>();
-
-    // let mut cmd = process::Command::new("clang");
 
     target.sources.iter().for_each(|source| {
         let name_only = Path::new(source)
@@ -238,11 +248,7 @@ fn build_target(target: &Target, output_file: String) -> () {
         output = process::Command::new("ar")
             .args(["rcs", format!("build/{output_file}").as_str()])
             .args(object_files)
-            .args(if target.link_args.is_none() {
-                vec![]
-            } else {
-                target.link_args.as_ref().unwrap().to_vec()
-            })
+            .args(target.link_args.clone().unwrap_or(vec![]))
             .output()
             .expect("Failed to execute linker");
     // } else if target.r#type == Some(String::from("binary")) {
