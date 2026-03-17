@@ -9,7 +9,6 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
-use knuffel;
 
 use expect::SBSExpect;
 use unwrap::SBSUnwrap;
@@ -42,55 +41,39 @@ struct Cmd {
     config: String,
 }
 
-#[derive(knuffel::Decode, Debug)]
+#[derive(Default)]
 struct KProject {
-    #[knuffel(child, unwrap(argument))]
     name: String,
 
-    #[knuffel(child, unwrap(children))]
     targets: Vec<Target>,
 }
 
-#[derive(knuffel::Decode, Debug)]
 struct Target {
-    #[knuffel(node_name)]
     name: String,
 
-    #[knuffel(child, unwrap(arguments))]
     compile_args: Option<Vec<String>>,
 
-    #[knuffel(child, unwrap(arguments))]
     link_args: Option<Vec<String>>,
 
-    #[knuffel(child, unwrap(arguments))]
     sources: Vec<String>,
 
-    #[knuffel(child, unwrap(argument))]
     install_directory: Option<String>,
 
-    #[knuffel(child, unwrap(argument))]
     compiler: Option<String>,
 
-    #[knuffel(child, unwrap(argument))]
     linker: Option<String>,
 
-    #[knuffel(child, unwrap(argument))]
     language: Option<String>,
 
-    #[knuffel(child, unwrap(argument))]
     r#type: Option<String>,
 }
 
 fn main() {
     let args: Cmd = Cmd::parse();
 
-    let mut project: KProject = knuffel::parse::<KProject>(
-        args.config.clone().as_str(),
-        std::fs::read_to_string(args.config.clone())
-            .log_expect(format!("Failed to read project file {}", args.config).as_str())
-            .as_str(),
-    )
-    .log_expect("Failed to parse config file");
+    let mut project: KProject = KProject::default();
+
+    log!(OOPS, "This program no more will work.");
 
     match args.command {
         Command::Clean => {
@@ -117,7 +100,7 @@ fn install_target(target: &Target, build_directory: String) {
         log!(PANIC, "Can't access project build directory");
     }
 
-    if !fs::exists(target.install_directory.clone().unwrap())
+    if !fs::exists(target.install_directory.clone().log_unwrap("Installation directory did not set"))
         .log_expect("Failed to get install directory state")
     {
         log!(PANIC, "Can't access install directory");

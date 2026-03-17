@@ -7,7 +7,7 @@ description = "Small Build System written in rust"
 
 [dependencies]
 clap = { version = "4.5.60", features = ["derive"] }
-knuffel = "3.2.0"
+rhai = "1.24.0"
 
 [package.metadata.generate-rpm]
 assets = [
