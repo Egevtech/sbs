@@ -1,6 +1,8 @@
 pub mod expect;
 pub mod macros;
 pub mod unwrap;
+pub mod fns;
+pub mod arrayit;
 
 use std::{
     fs,
@@ -13,16 +15,23 @@ use clap::{Parser, Subcommand};
 use expect::SBSExpect;
 use unwrap::SBSUnwrap;
 
-use rhai::Engine;
+use rhai::{EvalAltResult, Position, Dynamic, CustomType, Engine, TypeBuilder, Array};
+use crate::fns::init_target;
 
 // Main
 #[derive(Subcommand, Clone, Debug, PartialEq)]
 enum Command {
     /// Just build the project
-    Build,
+    Build {
+        /// Build options
+        options: Option<Vec<String>>,
+    },
 
     /// Build project, then run its default target
-    Run,
+    Run {
+        /// Build options
+        options: Option<Vec<String>>,
+    },
 
     /// Remove build directory
     Clean,
@@ -31,7 +40,7 @@ enum Command {
     Install,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[clap(version)]
 struct Cmd {
     /// Command to execute
@@ -46,10 +55,10 @@ struct Cmd {
 #[derive(Default)]
 struct KProject {
     name: String,
-
     targets: Vec<Target>,
 }
 
+#[derive(Default, CustomType, Clone, Debug)]
 struct Target {
     name: String,
 
@@ -70,14 +79,50 @@ struct Target {
     r#type: Option<String>,
 }
 
+impl Target {
+    fn add_source(&mut self, source: String) {
+        self.sources.push(source);
+    }
+
+    fn add_sources(&mut self, sources: Vec<String>) {
+        self.sources.extend(sources);
+    }
+}
+
 fn main() {
     let args: Cmd = Cmd::parse();
+    let project = KProject::default();
 
-    let mut project: KProject = KProject::default();
+    let mut engine: Engine = Engine::new();
 
-    let engine = Engine::new();
+    engine.build_type::<Target>();
 
-    let project_config = engine.eval_file::<rhai::Dynamic>(Path::new(args.config.as_str()).to_path_buf()).log_expect("Failed to run project file");
+    engine.register_fn("target_init", |name: String| {
+        let mut target: Target = Target::default();
+
+        target.name = name;
+
+        target
+    });
+
+    engine.register_fn("add_source", Target::add_source);
+    engine.register_fn("add_sources", |target: &mut Target, sources: rhai::Array| {
+        target.sources.extend(sources.into_iter().filter_map(|source| source.try_cast::<String>()));
+    });
+
+    engine.register_fn("get_build_options", move || {
+        match args.command.clone() {
+            Command::Build { options } => options.unwrap_or(vec![]).into_iter().map(Dynamic::from).collect(),
+            Command::Run { options } => options.unwrap_or(vec![]).into_iter().map(Dynamic::from).collect(),
+            _ => Array::new()
+        }
+    }); // Things like USE_INTERPRETER
+
+    let targets = engine.eval_file::<rhai::Array>(Path::new(args.config.as_str()).to_path_buf()).log_expect("Failed to run project file").into_iter().filter_map(|target| target.try_cast::<Target>()).collect::<Vec<Target>>();
+
+    targets.iter().for_each(|target| {
+        println!("{}: {:#?}", target.name, target);
+    });
 
     log!(OOPS, "This program no more will work.");
 
@@ -87,11 +132,11 @@ fn main() {
             exit(0);
         }
 
-        Command::Build => {
+        Command::Build {options:_ } => {
             build_project(&mut project);
         }
 
-        Command::Run => {
+        Command::Run {options:_ } => {
             log!(OOPS, "Coming soon, sorry");
         }
 
