@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 use expect::SBSExpect;
 use unwrap::SBSUnwrap;
 
-use rhai::{EvalAltResult, Position, Dynamic, CustomType, Engine, TypeBuilder, Array};
+use rhai::{Array, CustomType, Dynamic, Engine, EvalAltResult, Position, TypeBuilder};
 
 // Main
 #[derive(Subcommand, Clone, Debug, PartialEq)]
@@ -103,19 +103,37 @@ fn main() {
     });
 
     engine.register_fn("add_source", Target::add_source);
-    engine.register_fn("add_sources", |target: &mut Target, sources: rhai::Array| {
-        target.sources.extend(sources.into_iter().filter_map(|source| source.try_cast::<String>()));
-    });
+    engine.register_fn(
+        "add_sources",
+        |target: &mut Target, sources: rhai::Array| {
+            target.sources.extend(
+                sources
+                    .into_iter()
+                    .filter_map(|source| source.try_cast::<String>()),
+            );
+        },
+    );
 
-    engine.register_fn("get_build_options", move || {
-        match args.command.clone() {
-            Command::Build { options } => options.unwrap_or(vec![]).into_iter().map(Dynamic::from).collect(),
-            Command::Run { options } => options.unwrap_or(vec![]).into_iter().map(Dynamic::from).collect(),
-            _ => Array::new()
-        }
+    engine.register_fn("get_build_options", move || match args.command.clone() {
+        Command::Build { options } => options
+            .unwrap_or(vec![])
+            .into_iter()
+            .map(Dynamic::from)
+            .collect(),
+        Command::Run { options } => options
+            .unwrap_or(vec![])
+            .into_iter()
+            .map(Dynamic::from)
+            .collect(),
+        _ => Array::new(),
     }); // Things like USE_INTERPRETER
 
-    let targets = engine.eval_file::<rhai::Array>(Path::new(args.config.as_str()).to_path_buf()).log_expect("Failed to run project file").into_iter().filter_map(|target| target.try_cast::<Target>()).collect::<Vec<Target>>();
+    let targets = engine
+        .eval_file::<rhai::Array>(Path::new(args.config.as_str()).to_path_buf())
+        .log_expect("Failed to run project file")
+        .into_iter()
+        .filter_map(|target| target.try_cast::<Target>())
+        .collect::<Vec<Target>>();
 
     targets.iter().for_each(|target| {
         println!("{}: {:#?}", target.name, target);
@@ -129,11 +147,11 @@ fn main() {
             exit(0);
         }
 
-        Command::Build {options:_ } => {
+        Command::Build { options: _ } => {
             build_project(&mut project);
         }
 
-        Command::Run {options:_ } => {
+        Command::Run { options: _ } => {
             log!(OOPS, "Coming soon, sorry");
         }
 
@@ -148,8 +166,13 @@ fn install_target(target: &Target, build_directory: String) {
         log!(PANIC, "Can't access project build directory");
     }
 
-    if !fs::exists(target.install_directory.clone().log_unwrap("Installation directory did not set"))
-        .log_expect("Failed to get install directory state")
+    if !fs::exists(
+        target
+            .install_directory
+            .clone()
+            .log_unwrap("Installation directory did not set"),
+    )
+    .log_expect("Failed to get install directory state")
     {
         log!(PANIC, "Can't access install directory");
     }
