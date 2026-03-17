@@ -1,7 +1,6 @@
 pub mod expect;
 pub mod macros;
 pub mod unwrap;
-pub mod fns;
 pub mod arrayit;
 
 use std::{
@@ -16,7 +15,6 @@ use expect::SBSExpect;
 use unwrap::SBSUnwrap;
 
 use rhai::{EvalAltResult, Position, Dynamic, CustomType, Engine, TypeBuilder, Array};
-use crate::fns::init_target;
 
 // Main
 #[derive(Subcommand, Clone, Debug, PartialEq)]
