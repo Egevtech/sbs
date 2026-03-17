@@ -13,6 +13,8 @@ use clap::{Parser, Subcommand};
 use expect::SBSExpect;
 use unwrap::SBSUnwrap;
 
+use rhai::Engine;
+
 // Main
 #[derive(Subcommand, Clone, Debug, PartialEq)]
 enum Command {
@@ -36,8 +38,8 @@ struct Cmd {
     #[command(subcommand)]
     command: Command,
 
-    /// Path to project configuration file
-    #[arg(short, long, default_value = "sbs.kdl")]
+    /// Path to project script file
+    #[arg(short, long, default_value = "sbs.rhai")]
     config: String,
 }
 
@@ -72,6 +74,10 @@ fn main() {
     let args: Cmd = Cmd::parse();
 
     let mut project: KProject = KProject::default();
+
+    let engine = Engine::new();
+
+    let project_config = engine.eval_file::<rhai::Dynamic>(Path::new(args.config.as_str()).to_path_buf()).log_expect("Failed to run project file");
 
     log!(OOPS, "This program no more will work.");
 

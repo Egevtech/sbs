@@ -15,7 +15,7 @@ where E: std::fmt::Display
                 msg.push_str("': ");
             }
 
-            log!(PANIC_CODE, 255, "Expect catched: {} {}", msg, err);
+            log!(PANIC, "Expect catched: {} {}", msg, err);
         })
     }
 }
