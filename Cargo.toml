@@ -2,7 +2,14 @@
 name = "sbs"
 version = "0.1.0"
 edition = "2024"
+license = "BSD-3"
+description = "Small Build System written in rust"
 
 [dependencies]
 clap = { version = "4.5.60", features = ["derive"] }
 knuffel = "3.2.0"
+
+[package.metadata.generate-rpm]
+assets = [
+    {source="target/release/sbs", dest="/usr/local/bin/sbs"}
+]
