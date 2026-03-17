@@ -25,7 +25,7 @@ jobs:
       id: build
       run: |
         cargo build -r --verbose
-        echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        echo "tag=$(git tag)"
 
 
     - name: Build rpm package

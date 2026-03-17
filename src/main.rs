@@ -1,3 +1,7 @@
+pub mod expect;
+pub mod macros;
+pub mod unwrap;
+
 use std::{
     fs,
     path::Path,
@@ -6,6 +10,9 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use knuffel;
+
+use expect::SBSExpect;
+use unwrap::SBSUnwrap;
 
 // Main
 #[derive(Subcommand, Clone, Debug, PartialEq)]
@@ -62,43 +69,20 @@ struct Target {
     install_directory: Option<String>,
 
     #[knuffel(child, unwrap(argument))]
+    compiler: Option<String>,
+
+    #[knuffel(child, unwrap(argument))]
+    linker: Option<String>,
+
+    #[knuffel(child, unwrap(argument))]
     language: Option<String>,
 
     #[knuffel(child, unwrap(argument))]
     r#type: Option<String>,
 }
 
-macro_rules! log {
-    (PANIC, $exitCode:expr, $($msg:tt)*) => {
-        eprintln!("[PANIC/CODE {}] {}", $exitCode, format_args!($($msg)*));
-        exit($exitCode);
-    };
-
-    (PANIC, $($msg:tt)*) => {
-        eprintln!("[PANIC] {}", format_args!($($msg)*));
-        exit(-1);
-    };
-
-    (WARN, $($msg:tt)*) => {
-        eprintln!("[WARN] {}", format_args!($($msg)*));
-    };
-
-    ($msgtype:tt, $($msg:tt)*) => {
-        println!("[{}] {}", $type, format_args!($($msg)*));
-    };
-}
-
 fn main() {
     let args: Cmd = Cmd::parse();
-
-    match args.command {
-        Command::Clean => {
-            fs::remove_dir_all("./build").log_expect("Failed to remove build directory");
-            exit(0);
-        }
-
-        _ => {}
-    }
 
     let mut project: KProject = knuffel::parse::<KProject>(
         args.config.clone().as_str(),
@@ -108,113 +92,106 @@ fn main() {
     )
     .log_expect("Failed to parse config file");
 
-    println!("Building project {}", project.name);
+    match args.command {
+        Command::Clean => {
+            fs::remove_dir_all("./build").log_expect("Failed to remove build directory");
+            exit(0);
+        }
 
-    project.targets.iter_mut().for_each(|v| {
-        v.language = Some(
-            v.language
+        Command::Build => {
+            build_project(&mut project);
+        }
+
+        Command::Run => {
+            log!(OOPS, "Coming soon, sorry");
+        }
+
+        Command::Install => project.targets.iter().for_each(|target| {
+            install_target(target, "./build".to_string());
+        }),
+    }
+}
+
+fn install_target(target: &Target, build_directory: String) {
+    if !fs::exists(build_directory.as_str()).log_expect("Failed to get project directory state") {
+        log!(PANIC, "Can't access project build directory");
+    }
+
+    if !fs::exists(target.install_directory.clone().unwrap())
+        .log_expect("Failed to get install directory state")
+    {
+        log!(PANIC, "Can't access install directory");
+    }
+
+    fs::copy(
+        build_directory.as_str(),
+        format!(
+            "{}/{}",
+            target.install_directory.clone().unwrap(),
+            target.name
+        ),
+    )
+    .log_expect("Failed to copy target");
+}
+
+fn build_project(project: &mut KProject) -> () {
+    println!("Building project '{}'", project.name);
+
+    project.targets.iter_mut().for_each(|target| {
+        target.language = Some(
+            target
+                .language
                 .as_ref()
                 .unwrap_or(&String::from("c"))
                 .to_string(),
         );
 
-        if v.language != Some(String::from("c")) && v.language != Some(String::from("cpp")) {
-            eprintln!(
-                "SBS only support C(c) and C++(cpp), not '{}' at target {}",
-                v.language.as_ref().unwrap(),
-                v.name
+        if target.language != Some(String::from("c"))
+            && target.language != Some(String::from("cpp"))
+        {
+            log!(
+                PANIC,
+                "SBS only supports C(c) and C++(cpp), not '{}' at target {}",
+                target.language.as_ref().unwrap(),
+                target.name
             );
-            exit(-1);
         }
 
-        if v.r#type.is_none() {
-            v.r#type = Some(String::from("binary"))
-        } else if v.r#type != Some(String::from("binary"))
-            && v.r#type != Some(String::from("static"))
+        if target.r#type.is_none() {
+            target.r#type = Some(String::from("binary"))
+        } else if target.r#type != Some(String::from("binary"))
+            && target.r#type != Some(String::from("static"))
         {
-            eprintln!(
-                "SBS only support binary and static output type, not '{}' at target {}",
-                v.r#type.as_ref().unwrap(),
-                v.name
+            log!(
+                PANIC,
+                "SBS only supports binary and static output type, not '{}' at target {}",
+                target.r#type.as_ref().unwrap(),
+                target.name
             );
-            exit(-1);
         }
     });
 
-    let mut targets: Vec<(String, String)> = vec![];
+    project
+        .targets
+        .iter()
+        .enumerate()
+        .for_each(|(index, target)| {
+            let output_file = if target.r#type == Some("binary".to_string()) {
+                target.name.clone()
+            } else {
+                format!("lib{}.a", target.name)
+            };
 
-    for (index, target) in project.targets.iter().enumerate() {
-        let output_file = if target.r#type == Some("binary".to_string()) {
-            target.name.clone()
-        } else {
-            format!("lib{}.a", target.name)
-        };
+            build_target(target, output_file.clone());
 
-        println!(
-            "[{}%] Building target {} ({}/{})",
-            ((index as f32 + 1f32) / project.targets.len() as f32 * 100f32) as i32,
-            target.name,
-            index + 1,
-            project.targets.len(),
-        );
-
-        build_target(target, output_file.clone());
-
-        if args.command == Command::Install && !target.install_directory.is_none() {
-            targets.push((
-                std::fs::canonicalize(format!("build/{}", output_file))
-                    .log_expect("Path resolution error")
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-                format!(
-                    "{}/{}",
-                    target.install_directory.clone().unwrap(),
-                    output_file
-                ),
-            ));
-        }
-    }
-
-    if args.command != Command::Install {
-        println!("Finished");
-        exit(0);
-    }
-
-    println!("[100%] Installing targets...");
-
-    let command = targets
-        .iter_mut()
-        .map(|(target, dest)| format!("cp {} {}", target, dest))
-        .collect::<Vec<_>>()
-        .join(" && ");
-
-    process::Command::new("pkexec")
-        .args(["sh", "-c", command.as_str()])
-        .status()
-        .log_expect("Failed to install files");
-
-    println!("Finished");
-}
-
-trait SBSExpect<T, E> {
-    fn log_expect(self, message: &str) -> T;
-}
-
-impl <T, E>SBSExpect<T, E> for std::result::Result<T, E>
-where E: std::fmt::Display
-{
-    fn log_expect(self, message: &str) -> T {
-        self.unwrap_or_else(|err| {
-            let mut msg = String::from(message);
-            if !msg.is_empty() {
-                msg.insert(0, '\'');
-                msg.push_str("': ");
-            }
-
-            log!(PANIC, 255, "Expect catched: {} {}", msg, err);
-        })
-    }
+            println!(
+                "[{}%] Built target {} ({}/{})",
+                ((index as f32 + 1f32) / project.targets.len() as f32 * 100f32) as i32,
+                target.name,
+                index + 1,
+                project.targets.len(),
+            );
+        });
 }
 
 fn build_target(target: &Target, output_file: String) -> () {
@@ -224,55 +201,62 @@ fn build_target(target: &Target, output_file: String) -> () {
         .map(|f| {
             Path::new(f)
                 .file_name()
-                .unwrap_or_else(|| {
-                    eprintln!("Can't get filename");
-                    exit(-1);
-                })
+                .log_unwrap("Can't get filename")
                 .to_string_lossy()
                 .into_owned()
         })
         .collect::<Vec<String>>();
 
-    target.sources.iter().for_each(|source| {
-        let name_only = Path::new(source)
-            .file_name()
-            .unwrap_or_else(|| {
-                eprintln!("Error in path resolution");
-                exit(-1);
-            })
-            .to_string_lossy()
-            .to_owned();
+    target
+        .sources
+        .iter()
+        .enumerate()
+        .for_each(|(index, source)| {
+            let name_only = Path::new(source)
+                .file_name()
+                .log_unwrap("Path resolution error")
+                .to_string_lossy()
+                .to_owned();
 
-        std::fs::create_dir_all(format!("build/{}-target", target.name))
-            .log_expect("Failed to create output directory");
+            println!(
+                "[{}%] Building object {}",
+                ((index + 1) as f32 / target.sources.len() as f32 * 100f32) as i32,
+                name_only
+            );
 
-        let output = process::Command::new("clang")
-            .args([
-                "-c",
-                source.as_str(),
-                "-o",
-                format!("build/{}-target/{}.o", target.name, name_only).as_str(),
-            ])
-            .args(target.compile_args.clone().unwrap_or(vec![]))
-            .output()
-            .log_expect("Failed to execute compiler");
+            std::fs::create_dir_all(format!("build/{}-target", target.name))
+                .log_expect("Failed to create output directory");
 
-        print!(
-            "{}",
-            String::from_utf8(output.stdout.clone()).log_expect("Uncorrect UTF-8 output format"),
-        );
+            let output =
+                process::Command::new(target.compiler.clone().unwrap_or("clang".to_string()))
+                    .args([
+                        "-c",
+                        source.as_str(),
+                        "-o",
+                        format!("build/{}-target/{}.o", target.name, name_only).as_str(),
+                    ])
+                    .args(target.compile_args.clone().unwrap_or(vec![]))
+                    .output()
+                    .log_expect("Failed to execute compiler");
 
-        print!(
-            "{}",
-            String::from_utf8(output.stderr.clone()).log_expect("Uncorrect UTF-8 output format"),
-        );
+            print!(
+                "{}",
+                String::from_utf8(output.stdout.clone())
+                    .log_expect("Uncorrected UTF-8 output format"),
+            );
 
-        if !output.status.success() {
-            log!(PANIC, "Compiler panicked");
-        }
-    });
+            print!(
+                "{}",
+                String::from_utf8(output.stderr.clone())
+                    .log_expect("Uncorrected UTF-8 output format"),
+            );
 
-    println!("Linking target {}...", target.name);
+            if !output.status.success() {
+                log!(PANIC, "Compiler panicked");
+            }
+        });
+
+    println!("[LINK] Linking target {}...", target.name);
 
     let object_files = files
         .iter()
@@ -288,7 +272,7 @@ fn build_target(target: &Target, output_file: String) -> () {
             .output()
             .log_expect("Failed to execute linker");
     } else {
-        output = process::Command::new("clang")
+        output = process::Command::new(target.linker.clone().unwrap_or("clang".to_string()))
             .args(object_files)
             .args(["-o", format!("build/{output_file}").as_str()])
             .args(target.link_args.clone().unwrap_or(vec![]))
@@ -298,17 +282,20 @@ fn build_target(target: &Target, output_file: String) -> () {
 
     print!(
         "{}",
-        String::from_utf8(output.stdout.clone()).log_expect("Uncorrect UTF-8 output format")
+        String::from_utf8(output.stdout.clone()).log_expect("Uncorrected UTF-8 output format")
     );
     print!(
         "{}",
-        String::from_utf8(output.stderr.clone()).log_expect("Uncorrect UTF-8 output format")
+        String::from_utf8(output.stderr.clone()).log_expect("Uncorrected UTF-8 output format")
     );
 
     if !output.status.success() {
         eprintln!(
             "Linker panicked with status {}",
-            output.status.code().unwrap()
+            output
+                .status
+                .code()
+                .log_unwrap("Failed to get linker exit code")
         );
         exit(-1);
     }
