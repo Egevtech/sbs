@@ -307,7 +307,7 @@ fn build_target(target: &Target, output_file: String) -> () {
 
     if !output.status.success() {
         eprintln!(
-            "Linker paniced with status {}",
+            "Linker panicked with status {}",
             output.status.code().unwrap()
         );
         exit(-1);
