@@ -43,6 +43,6 @@ jobs:
       with:
         files: target/generate-rpm/*.rpm
         tag_name: ${{ steps.build.outputs.tag }}
-        name: ${{ github.ref }}
+        name: ${{ steps.build.outputs.tag }}
         draft: false
         prerelease: false
