@@ -1,7 +1,6 @@
 pub mod expect;
 pub mod macros;
 pub mod unwrap;
-pub mod arrayit;
 
 use std::{
     fs,
