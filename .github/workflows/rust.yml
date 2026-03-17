@@ -24,7 +24,7 @@ jobs:
     - name: Build
       id: build
       run: |
-        cargo build -r --verbose
+        cargo build -r 
         echo "tag=$(git tag)"
 
 
