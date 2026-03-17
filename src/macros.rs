@@ -12,6 +12,7 @@ macro_rules! log {
 
     (OOPS, $($msg:tt)*) => {
         eprintln!("[OOPS] {}", format_args!($($msg)*));
+        std::process::exit(-1);
     };
 
     (WARN, $($msg:tt)*) => {
