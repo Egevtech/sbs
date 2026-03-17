@@ -22,7 +22,11 @@ jobs:
         cargo install cargo-generate-rpm
 
     - name: Build
-      run: cargo build -r --verbose
+      id: build
+      run: |
+        cargo build -r --verbose
+        echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
 
     - name: Build rpm package
       run: cargo generate-rpm
@@ -38,7 +42,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: target/generate-rpm/*.rpm
-        tag_name: ${{ github.ref }}
+        tag_name: ${{ steps.build.outputs.tag }}
         name: ${{ github.ref }}
         draft: false
         prerelease: false
