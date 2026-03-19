@@ -348,7 +348,14 @@ fn build_target(target: &Target, output_file: String) -> () {
             );
 
             if !output.status.success() {
-                log!(PANIC, "Compiler panicked");
+                log!(
+            PANIC,
+            "Compiler panicked with status {}",
+            output
+                .status
+                .code()
+                .log_unwrap("Failed to get compile exit code")
+        );
             }
         });
 
@@ -386,13 +393,13 @@ fn build_target(target: &Target, output_file: String) -> () {
     );
 
     if !output.status.success() {
-        eprintln!(
+        log!(
+            PANIC,
             "Linker panicked with status {}",
             output
                 .status
                 .code()
                 .log_unwrap("Failed to get linker exit code")
         );
-        exit(-1);
     }
 }
