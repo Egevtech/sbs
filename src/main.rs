@@ -200,6 +200,10 @@ fn main() {
 }
 
 fn install_target(target: &Target, build_directory: String) {
+    if target.install_directory.is_none() {
+        return
+    }
+
     if !fs::exists(build_directory.as_str()).log_expect("Failed to get project directory state") {
         log!(PANIC, "Can't access project build directory");
     }
