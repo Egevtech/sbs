@@ -47,9 +47,6 @@ struct Cmd {
     /// Path to project script file
     #[arg(short, long, default_value = "sbs.rhai")]
     config: String,
-
-    #[arg(short, long)]
-    debug: bool,
 }
 
 #[derive(Default, CustomType, Clone, Debug)]
@@ -179,9 +176,8 @@ fn main() {
         .log_expect("Failed to run project file");
 
 
-    if args.debug {
-        println!("{:#?}", project);
-    }
+    #[cfg(debug_assertions)]
+    println!("{:#?}", project);
 
     match args.command {
         Command::Clean => {
