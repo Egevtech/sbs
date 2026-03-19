@@ -92,11 +92,6 @@ impl Target {
 impl KProject {
 }
 
-struct Lang {
-    name: String,
-    compiler: String,
-}
-
 fn main() {
     let args: Cmd = Cmd::parse();
     let mut engine: Engine = Engine::new();
@@ -156,7 +151,7 @@ fn main() {
         target.install_directory = Some(installation_path);
     });
 
-    engine.register_fn("set_compiler", |target: &mut Target, lang: String, compiler: String| {
+    engine.register_fn("set_compiler", |target: &mut Target, compiler: String| {
         target.compiler = compiler;
     });
 
