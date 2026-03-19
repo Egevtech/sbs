@@ -47,9 +47,12 @@ struct Cmd {
     /// Path to project script file
     #[arg(short, long, default_value = "sbs.rhai")]
     config: String,
+
+    #[arg(short, long)]
+    debug: bool,
 }
 
-#[derive(Default)]
+#[derive(Default, CustomType, Clone, Debug)]
 struct KProject {
     name: String,
     targets: Vec<Target>,
@@ -59,17 +62,17 @@ struct KProject {
 struct Target {
     name: String,
 
-    compile_args: Option<Vec<String>>,
+    compile_args: Vec<String>,
 
-    link_args: Option<Vec<String>>,
+    link_args: Vec<String>,
 
     sources: Vec<String>,
 
     install_directory: Option<String>,
 
-    compiler: Option<String>,
+    compiler: String,
 
-    linker: Option<String>,
+    linker: String,
 
     language: Option<String>,
 
@@ -86,35 +89,83 @@ impl Target {
     }
 }
 
+impl KProject {
+}
+
+struct Lang {
+    name: String,
+    compiler: String,
+}
+
 fn main() {
     let args: Cmd = Cmd::parse();
-    let project = KProject::default();
-
     let mut engine: Engine = Engine::new();
 
     engine.build_type::<Target>();
 
-    engine.register_fn("target_init", |name: String| {
+    engine.register_fn("init_target", |name: String| {
         let mut target: Target = Target::default();
 
         target.name = name;
 
+        target.sources = vec![];
+        target.compile_args = vec![];
+        target.link_args = vec![];
+
         target
+    });
+
+    engine.register_fn("init_project", |name: String| {
+        let mut project: KProject = KProject::default();
+
+        project.name = name;
+
+        project
+    });
+
+    engine.register_fn("add_target", |project: &mut KProject, target: Target| {
+        project.targets.push(target);
     });
 
     engine.register_fn("add_source", Target::add_source);
     engine.register_fn(
         "add_sources",
         |target: &mut Target, sources: rhai::Array| {
-            target.sources.extend(
+            target.add_sources(
                 sources
                     .into_iter()
-                    .filter_map(|source| source.try_cast::<String>()),
+                    .filter_map(|source| source.try_cast::<String>())
+                    .collect(),
             );
         },
     );
 
-    engine.register_fn("get_build_options", move || match args.command.clone() {
+    engine.register_fn("set_type", |target: &mut Target, r#type: String| {
+        target.r#type = Some(r#type);
+    });
+
+    engine.register_fn("add_compile_args", |target: &mut Target, compile_args: Vec<Dynamic>| {
+        target.compile_args.extend(compile_args.into_iter().filter_map(|arg| arg.try_cast::<String>()));
+    });
+
+    engine.register_fn("add_link_args", |target: &mut Target, link_args: Vec<Dynamic>| {
+        target.link_args.extend(link_args.into_iter().filter_map(|arg| arg.try_cast::<String>()));
+    });
+
+    engine.register_fn("set_installation_path", |target: &mut Target, installation_path: String| {
+        target.install_directory = Some(installation_path);
+    });
+
+    engine.register_fn("set_compiler", |target: &mut Target, lang: String, compiler: String| {
+        target.compiler = compiler;
+    });
+
+    engine.register_fn("set_linker", |target: &mut Target, linker: String| {
+        target.linker = linker;
+    });
+
+    let fn_args = args.clone();
+    engine.register_fn("get_build_options", move || match fn_args.clone().command {
         Command::Build { options } => options
             .unwrap_or(vec![])
             .into_iter()
@@ -128,18 +179,14 @@ fn main() {
         _ => Array::new(),
     }); // Things like USE_INTERPRETER
 
-    let targets = engine
-        .eval_file::<rhai::Array>(Path::new(args.config.as_str()).to_path_buf())
-        .log_expect("Failed to run project file")
-        .into_iter()
-        .filter_map(|target| target.try_cast::<Target>())
-        .collect::<Vec<Target>>();
+    let mut project = engine
+        .eval_file(Path::new(args.config.as_str()).to_path_buf())
+        .log_expect("Failed to run project file");
 
-    targets.iter().for_each(|target| {
-        println!("{}: {:#?}", target.name, target);
-    });
 
-    log!(OOPS, "This program no more will work.");
+    if args.debug {
+        println!("{:#?}", project);
+    }
 
     match args.command {
         Command::Clean => {
@@ -282,14 +329,14 @@ fn build_target(target: &Target, output_file: String) -> () {
                 .log_expect("Failed to create output directory");
 
             let output =
-                process::Command::new(target.compiler.clone().unwrap_or("clang".to_string()))
+                process::Command::new(target.compiler.clone())
                     .args([
                         "-c",
                         source.as_str(),
                         "-o",
                         format!("build/{}-target/{}.o", target.name, name_only).as_str(),
                     ])
-                    .args(target.compile_args.clone().unwrap_or(vec![]))
+                    .args(target.compile_args.clone())
                     .output()
                     .log_expect("Failed to execute compiler");
 
@@ -322,14 +369,14 @@ fn build_target(target: &Target, output_file: String) -> () {
         output = process::Command::new("ar")
             .args(["rcs", format!("build/{output_file}").as_str()])
             .args(object_files)
-            .args(target.link_args.clone().unwrap_or(vec![]))
+            .args(target.link_args.clone())
             .output()
             .log_expect("Failed to execute linker");
     } else {
-        output = process::Command::new(target.linker.clone().unwrap_or("clang".to_string()))
+        output = process::Command::new(target.linker.clone())
             .args(object_files)
             .args(["-o", format!("build/{output_file}").as_str()])
-            .args(target.link_args.clone().unwrap_or(vec![]))
+            .args(target.link_args.clone())
             .output()
             .log_expect("Failed to execute linker")
     }
