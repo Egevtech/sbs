@@ -5,7 +5,7 @@ pub mod unwrap;
 use std::{
     fs,
     path::Path,
-    process::{self, Output, exit},
+    process::{self, Output},
 };
 
 use clap::{Parser, Subcommand};
@@ -15,26 +15,39 @@ use unwrap::SBSUnwrap;
 
 use rhai::{Array, CustomType, Dynamic, Engine, EvalAltResult, Position, TypeBuilder};
 
-// Main
+#[derive(Parser, Clone, Debug, PartialEq)]
+struct RBConfig {
+    /// Do not show compiler and linker output
+    #[arg(long)]
+    no_output: bool,
+
+    /// Select compiler instead parameters in config
+    #[arg(short, long)]
+    compiler: Option<String>,
+
+    /// Select compiler instead parameters in config
+    #[arg(short, long)]
+    linker: Option<String>,
+
+    /// Build options
+    options: Option<Vec<String>>,
+}
+
 #[derive(Subcommand, Clone, Debug, PartialEq)]
 enum Command {
     /// Just build the project
-    Build {
-        /// Build options
-        options: Option<Vec<String>>,
-    },
+    Build(RBConfig),
 
     /// Build project, then run its default target
-    Run {
-        /// Build options
-        options: Option<Vec<String>>,
-    },
+    Run(RBConfig),
 
     /// Remove build directory
     Clean,
 
     /// Build project, then install its targets
-    Install,
+    Install{
+        targets: Option<Vec<String>>,
+    },
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -91,8 +104,10 @@ impl KProject {
 
 fn main() {
     let args: Cmd = Cmd::parse();
-    let mut engine: Engine = Engine::new();
 
+    log!(INFO, "Starting engine");
+    let mut engine: Engine = Engine::new();
+    log!(INFO, "Registering types and functions...");
     engine.build_type::<Target>();
 
     engine.register_fn("init_target", |name: String| {
@@ -103,6 +118,9 @@ fn main() {
         target.sources = vec![];
         target.compile_args = vec![];
         target.link_args = vec![];
+
+        target.compiler = "clang".to_string();
+        target.linker = "clang".to_string();
 
         target
     });
@@ -158,12 +176,12 @@ fn main() {
 
     let fn_args = args.clone();
     engine.register_fn("get_build_options", move || match fn_args.clone().command {
-        Command::Build { options } => options
+        Command::Build (config) => config.options
             .unwrap_or(vec![])
             .into_iter()
             .map(Dynamic::from)
             .collect(),
-        Command::Run { options } => options
+        Command::Run (config) => config.options
             .unwrap_or(vec![])
             .into_iter()
             .map(Dynamic::from)
@@ -171,31 +189,40 @@ fn main() {
         _ => Array::new(),
     }); // Things like USE_INTERPRETER
 
+    log!(INFO, "Running engine");
+
     let mut project = engine
         .eval_file(Path::new(args.config.as_str()).to_path_buf())
         .log_expect("Failed to run project file");
 
+    log!(INFO, "Engine done");
 
     #[cfg(debug_assertions)]
     println!("{:#?}", project);
 
+
+    log!(INFO, "Matching commands...");
     match args.command {
         Command::Clean => {
             fs::remove_dir_all("./build").log_expect("Failed to remove build directory");
-            exit(0);
         }
 
-        Command::Build { options: _ } => {
-            build_project(&mut project);
+        Command::Build(config) => {
+            build_project(&mut project, config.no_output);
         }
 
-        Command::Run { options: _ } => {
+        Command::Run(_config) => {
             log!(OOPS, "Coming soon, sorry");
         }
 
-        Command::Install => project.targets.iter().for_each(|target| {
-            install_target(target, "./build".to_string());
-        }),
+        Command::Install{targets} => {
+            project.targets.iter().filter(|target| {
+                targets.clone().unwrap_or(project.targets.iter().map(|t| t.name.clone()).collect()).contains(&target.name)
+            }).for_each(|target| {
+                log!(INFO, "Installing target {}", target.name);
+                install_target(target, "./build".to_string());
+            })
+        },
     }
 }
 
@@ -230,10 +257,12 @@ fn install_target(target: &Target, build_directory: String) {
     .log_expect("Failed to copy target");
 }
 
-fn build_project(project: &mut KProject) -> () {
+fn build_project(project: &mut KProject, no_output: bool) -> () {
     println!("Building project '{}'", project.name);
+    log!(INFO, "Building project {}", project.name);
 
     project.targets.iter_mut().for_each(|target| {
+        log!(INFO, "Target '{}'", target.name);
         target.language = Some(
             target
                 .language
@@ -253,6 +282,8 @@ fn build_project(project: &mut KProject) -> () {
             );
         }
 
+        log!(INFO, "Target language ok");
+
         if target.r#type.is_none() {
             target.r#type = Some(String::from("binary"))
         } else if target.r#type != Some(String::from("binary"))
@@ -265,24 +296,34 @@ fn build_project(project: &mut KProject) -> () {
                 target.name
             );
         }
+
+        log!(INFO, "Target type ok");
     });
+
+    log!(INFO, "Targets ok");
 
     project
         .targets
         .iter()
         .enumerate()
         .for_each(|(index, target)| {
+            println!("[{}%] Building target {}",
+                     ((index as f32 / project.targets.len() as f32) * 100f32) as i32,
+                     target.name);
+
             let output_file = if target.r#type == Some("binary".to_string()) {
                 target.name.clone()
             } else {
                 format!("lib{}.a", target.name)
             };
 
-            build_target(target, output_file.clone());
+            log!(INFO, "Target's output file ready");
+
+            build_target(target, output_file.clone(), no_output);
 
             println!(
                 "[{}%] Built target {} ({}/{})",
-                ((index as f32 + 1f32) / project.targets.len() as f32 * 100f32) as i32,
+                ((index as f32 + 1f32) / (project.targets.len()) as f32 * 100f32) as i32,
                 target.name,
                 index + 1,
                 project.targets.len(),
@@ -290,7 +331,8 @@ fn build_project(project: &mut KProject) -> () {
         });
 }
 
-fn build_target(target: &Target, output_file: String) -> () {
+fn build_target(target: &Target, output_file: String, no_output: bool) -> () {
+    log!(INFO, "Building target '{}'", target.name);
     let files = target
         .sources
         .iter()
@@ -316,12 +358,14 @@ fn build_target(target: &Target, output_file: String) -> () {
 
             println!(
                 "[{}%] Building object {}",
-                ((index + 1) as f32 / target.sources.len() as f32 * 100f32) as i32,
+                (index as f32 / (target.sources.len() as f32 - 1f32) * 100f32) as i32,
                 name_only
             );
 
             std::fs::create_dir_all(format!("build/{}-target", target.name))
                 .log_expect("Failed to create output directory");
+
+            log!(INFO, "Building object {}", target.name);
 
             let output =
                 process::Command::new(target.compiler.clone())
@@ -333,19 +377,21 @@ fn build_target(target: &Target, output_file: String) -> () {
                     ])
                     .args(target.compile_args.clone())
                     .output()
-                    .log_expect("Failed to execute compiler");
+                    .log_expect(format!("Failed to execute compiler: {:?}", target.compiler).as_str());
 
-            print!(
-                "{}",
-                String::from_utf8(output.stdout.clone())
-                    .log_expect("Uncorrected UTF-8 output format"),
-            );
+            if !no_output {
+                print!(
+                    "{}",
+                    String::from_utf8(output.stdout.clone())
+                        .log_expect("Uncorrected UTF-8 output format"),
+                );
 
-            print!(
-                "{}",
-                String::from_utf8(output.stderr.clone())
-                    .log_expect("Uncorrected UTF-8 output format"),
-            );
+                print!(
+                    "{}",
+                    String::from_utf8(output.stderr.clone())
+                        .log_expect("Uncorrected UTF-8 output format"),
+                );
+            }
 
             if !output.status.success() {
                 log!(
@@ -360,6 +406,7 @@ fn build_target(target: &Target, output_file: String) -> () {
         });
 
     println!("[LINK] Linking target {}...", target.name);
+    log!(INFO, "Linking target {}", target.name);
 
     let object_files = files
         .iter()
@@ -373,24 +420,26 @@ fn build_target(target: &Target, output_file: String) -> () {
             .args(object_files)
             .args(target.link_args.clone())
             .output()
-            .log_expect("Failed to execute linker");
+            .log_expect("Failed to execute linker: ar rcs");
     } else {
         output = process::Command::new(target.linker.clone())
             .args(object_files)
             .args(["-o", format!("build/{output_file}").as_str()])
             .args(target.link_args.clone())
             .output()
-            .log_expect("Failed to execute linker")
+            .log_expect(format!("Failed to execute linker: {:?}", target.linker).as_str());
     }
 
-    print!(
-        "{}",
-        String::from_utf8(output.stdout.clone()).log_expect("Uncorrected UTF-8 output format")
-    );
-    print!(
-        "{}",
-        String::from_utf8(output.stderr.clone()).log_expect("Uncorrected UTF-8 output format")
-    );
+    if !no_output {
+        print!(
+            "{}",
+            String::from_utf8(output.stdout.clone()).log_expect("Uncorrected UTF-8 output format")
+        );
+        print!(
+            "{}",
+            String::from_utf8(output.stderr.clone()).log_expect("Uncorrected UTF-8 output format")
+        );
+    }
 
     if !output.status.success() {
         log!(

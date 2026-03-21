@@ -19,8 +19,9 @@ macro_rules! log {
         eprintln!("[WARN] {}", format_args!($($msg)*));
     };
 
-    ($msgtype:tt, $($msg:tt)*) => {
-        println!("[{}] {}", $type, format_args!($($msg)*));
+    ($msgtype:ident, $($msg:tt)*) => {
+        #[cfg(debug_assertions)]
+        println!("[{}] {}", stringify!($msgtype), format_args!($($msg)*));
     };
 }
 
