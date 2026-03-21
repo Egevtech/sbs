@@ -13,6 +13,8 @@ use clap::{Parser, Subcommand};
 use expect::SBSExpect;
 use unwrap::SBSUnwrap;
 
+use glob::glob;
+
 use rhai::{Array, CustomType, Dynamic, Engine, EvalAltResult, Position, TypeBuilder};
 
 #[derive(Parser, Clone, Debug, PartialEq)]
@@ -172,6 +174,14 @@ fn main() {
 
     engine.register_fn("set_linker", |target: &mut Target, linker: String| {
         target.linker = linker;
+    });
+
+    engine.register_fn("filter_dir", |pattern: String| {
+        glob(pattern.as_str())
+            .log_expect("Invalid pattern")
+            .map(|gr| gr.log_expect("Invalid pattern (l2)").display().to_string())
+            .map(Dynamic::from)
+            .collect::<Vec<Dynamic>>()
     });
 
     let fn_args = args.clone();

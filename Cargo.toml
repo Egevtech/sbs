@@ -7,6 +7,7 @@ description = "Small Build System written in rust"
 
 [dependencies]
 clap = { version = "4.5.60", features = ["derive"] }
+glob = "0.3.3"
 rhai = { version = "1.24.0", features = ["serde"] }
 
 [package.metadata.generate-rpm]
