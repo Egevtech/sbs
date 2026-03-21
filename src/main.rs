@@ -47,9 +47,7 @@ enum Command {
     Clean,
 
     /// Build project, then install its targets
-    Install{
-        targets: Option<Vec<String>>,
-    },
+    Install { targets: Option<Vec<String>> },
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -101,8 +99,7 @@ impl Target {
     }
 }
 
-impl KProject {
-}
+impl KProject {}
 
 fn main() {
     let args: Cmd = Cmd::parse();
@@ -156,17 +153,34 @@ fn main() {
         target.r#type = Some(r#type);
     });
 
-    engine.register_fn("add_compile_args", |target: &mut Target, compile_args: Vec<Dynamic>| {
-        target.compile_args.extend(compile_args.into_iter().filter_map(|arg| arg.try_cast::<String>()));
-    });
+    engine.register_fn(
+        "add_compile_args",
+        |target: &mut Target, compile_args: Vec<Dynamic>| {
+            target.compile_args.extend(
+                compile_args
+                    .into_iter()
+                    .filter_map(|arg| arg.try_cast::<String>()),
+            );
+        },
+    );
 
-    engine.register_fn("add_link_args", |target: &mut Target, link_args: Vec<Dynamic>| {
-        target.link_args.extend(link_args.into_iter().filter_map(|arg| arg.try_cast::<String>()));
-    });
+    engine.register_fn(
+        "add_link_args",
+        |target: &mut Target, link_args: Vec<Dynamic>| {
+            target.link_args.extend(
+                link_args
+                    .into_iter()
+                    .filter_map(|arg| arg.try_cast::<String>()),
+            );
+        },
+    );
 
-    engine.register_fn("set_installation_path", |target: &mut Target, installation_path: String| {
-        target.install_directory = Some(installation_path);
-    });
+    engine.register_fn(
+        "set_installation_path",
+        |target: &mut Target, installation_path: String| {
+            target.install_directory = Some(installation_path);
+        },
+    );
 
     engine.register_fn("set_compiler", |target: &mut Target, compiler: String| {
         target.compiler = compiler;
@@ -186,18 +200,20 @@ fn main() {
 
     let fn_args = args.clone();
     engine.register_fn("get_build_options", move || match fn_args.clone().command {
-        Command::Build (config) => config.options
+        Command::Build(config) => config
+            .options
             .unwrap_or(vec![])
             .into_iter()
             .map(Dynamic::from)
             .collect(),
-        Command::Run (config) => config.options
+        Command::Run(config) => config
+            .options
             .unwrap_or(vec![])
             .into_iter()
             .map(Dynamic::from)
             .collect(),
         _ => Array::new(),
-    }); // Things like USE_INTERPRETER
+    });
 
     log!(INFO, "Running engine");
 
@@ -209,7 +225,6 @@ fn main() {
 
     #[cfg(debug_assertions)]
     println!("{:#?}", project);
-
 
     log!(INFO, "Matching commands...");
     match args.command {
@@ -225,20 +240,25 @@ fn main() {
             log!(OOPS, "Coming soon, sorry");
         }
 
-        Command::Install{targets} => {
-            project.targets.iter().filter(|target| {
-                targets.clone().unwrap_or(project.targets.iter().map(|t| t.name.clone()).collect()).contains(&target.name)
-            }).for_each(|target| {
+        Command::Install { targets } => project
+            .targets
+            .iter()
+            .filter(|target| {
+                targets
+                    .clone()
+                    .unwrap_or(project.targets.iter().map(|t| t.name.clone()).collect())
+                    .contains(&target.name)
+            })
+            .for_each(|target| {
                 log!(INFO, "Installing target {}", target.name);
                 install_target(target, "./build".to_string());
-            })
-        },
+            }),
     }
 }
 
 fn install_target(target: &Target, build_directory: String) {
     if target.install_directory.is_none() {
-        return
+        return;
     }
 
     if !fs::exists(build_directory.as_str()).log_expect("Failed to get project directory state") {
@@ -317,9 +337,11 @@ fn build_project(project: &mut KProject, no_output: bool) -> () {
         .iter()
         .enumerate()
         .for_each(|(index, target)| {
-            println!("[{}%] Building target {}",
-                     ((index as f32 / project.targets.len() as f32) * 100f32) as i32,
-                     target.name);
+            println!(
+                "[{}%] Building target {}",
+                ((index as f32 / project.targets.len() as f32) * 100f32) as i32,
+                target.name
+            );
 
             let output_file = if target.r#type == Some("binary".to_string()) {
                 target.name.clone()
@@ -377,17 +399,16 @@ fn build_target(target: &Target, output_file: String, no_output: bool) -> () {
 
             log!(INFO, "Building object {}", target.name);
 
-            let output =
-                process::Command::new(target.compiler.clone())
-                    .args([
-                        "-c",
-                        source.as_str(),
-                        "-o",
-                        format!("build/{}-target/{}.o", target.name, name_only).as_str(),
-                    ])
-                    .args(target.compile_args.clone())
-                    .output()
-                    .log_expect(format!("Failed to execute compiler: {:?}", target.compiler).as_str());
+            let output = process::Command::new(target.compiler.clone())
+                .args([
+                    "-c",
+                    source.as_str(),
+                    "-o",
+                    format!("build/{}-target/{}.o", target.name, name_only).as_str(),
+                ])
+                .args(target.compile_args.clone())
+                .output()
+                .log_expect(format!("Failed to execute compiler: {:?}", target.compiler).as_str());
 
             if !no_output {
                 print!(
@@ -405,13 +426,13 @@ fn build_target(target: &Target, output_file: String, no_output: bool) -> () {
 
             if !output.status.success() {
                 log!(
-            PANIC,
-            "Compiler panicked with status {}",
-            output
-                .status
-                .code()
-                .log_unwrap("Failed to get compile exit code")
-        );
+                    PANIC,
+                    "Compiler panicked with status {}",
+                    output
+                        .status
+                        .code()
+                        .log_unwrap("Failed to get compile exit code")
+                );
             }
         });
 
