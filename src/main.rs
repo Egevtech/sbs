@@ -33,6 +33,10 @@ struct RBConfig {
 
     /// Build options
     options: Option<Vec<String>>,
+
+    /// Show verbose output due operations
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 #[derive(Subcommand, Clone, Debug, PartialEq)]
@@ -41,13 +45,10 @@ enum Command {
     Build(RBConfig),
 
     /// Build project, then run its default target
-    Run(RBConfig),
+    // Run(RBConfig),
 
     /// Remove build directory
     Clean,
-
-    /// Build project, then install its targets
-    Install { targets: Option<Vec<String>> },
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -65,15 +66,10 @@ struct Cmd {
 #[derive(Default, CustomType, Clone, Debug)]
 struct KProject {
     name: String,
-    targets: Vec<Target>,
-}
-
-#[derive(Default, CustomType, Clone, Debug)]
-struct Target {
-    name: String,
+    version: String,
+    language: String,
 
     compile_args: Vec<String>,
-
     link_args: Vec<String>,
 
     sources: Vec<String>,
@@ -81,15 +77,12 @@ struct Target {
     install_directory: Option<String>,
 
     compiler: String,
-
     linker: String,
 
-    language: Option<String>,
-
-    r#type: Option<String>,
+    r#type: String,
 }
 
-impl Target {
+impl KProject {
     fn add_source(&mut self, source: String) {
         self.sources.push(source);
     }
@@ -99,47 +92,59 @@ impl Target {
     }
 }
 
-impl KProject {}
-
 fn main() {
     let args: Cmd = Cmd::parse();
 
     log!(INFO, "Starting engine");
     let mut engine: Engine = Engine::new();
+
     log!(INFO, "Registering types and functions...");
-    engine.build_type::<Target>();
+    engine.build_type::<KProject>();
 
-    engine.register_fn("init_target", |name: String| {
-        let mut target: Target = Target::default();
+    engine.register_fn(
+        "init_project",
+        |name: String, version: String, language: String| {
+            let mut target: KProject = KProject::default();
 
-        target.name = name;
+            target.name = name;
+            target.version = version;
 
-        target.sources = vec![];
-        target.compile_args = vec![];
-        target.link_args = vec![];
+            target.sources = vec![];
+            target.compile_args = vec![];
+            target.link_args = vec![];
 
-        target.compiler = "clang".to_string();
-        target.linker = "clang".to_string();
+            target.compiler = "clang".to_string();
+            target.linker = "clang".to_string();
 
-        target
-    });
+            target.language = language;
 
-    engine.register_fn("init_project", |name: String| {
-        let mut project: KProject = KProject::default();
+            target
+        },
+    );
 
-        project.name = name;
+    engine.register_fn(
+        "init_project",
+        |name: String, version: String, language: String, r#type: String| {
+            let mut project = KProject::default();
 
-        project
-    });
+            project.name = name;
+            project.version = version;
 
-    engine.register_fn("add_target", |project: &mut KProject, target: Target| {
-        project.targets.push(target);
-    });
+            project.language = language;
 
-    engine.register_fn("add_source", Target::add_source);
+            project.compiler = "clang".to_string();
+            project.linker = "clang".to_string();
+
+            project.r#type = r#type;
+
+            project
+        },
+    );
+
+    engine.register_fn("add_source", KProject::add_source);
     engine.register_fn(
         "add_sources",
-        |target: &mut Target, sources: rhai::Array| {
+        |target: &mut KProject, sources: rhai::Array| {
             target.add_sources(
                 sources
                     .into_iter()
@@ -149,13 +154,13 @@ fn main() {
         },
     );
 
-    engine.register_fn("set_type", |target: &mut Target, r#type: String| {
-        target.r#type = Some(r#type);
+    engine.register_fn("set_type", |target: &mut KProject, r#type: String| {
+        target.r#type = r#type;
     });
 
     engine.register_fn(
         "add_compile_args",
-        |target: &mut Target, compile_args: Vec<Dynamic>| {
+        |target: &mut KProject, compile_args: Vec<Dynamic>| {
             target.compile_args.extend(
                 compile_args
                     .into_iter()
@@ -166,7 +171,7 @@ fn main() {
 
     engine.register_fn(
         "add_link_args",
-        |target: &mut Target, link_args: Vec<Dynamic>| {
+        |target: &mut KProject, link_args: Vec<Dynamic>| {
             target.link_args.extend(
                 link_args
                     .into_iter()
@@ -177,16 +182,16 @@ fn main() {
 
     engine.register_fn(
         "set_installation_path",
-        |target: &mut Target, installation_path: String| {
+        |target: &mut KProject, installation_path: String| {
             target.install_directory = Some(installation_path);
         },
     );
 
-    engine.register_fn("set_compiler", |target: &mut Target, compiler: String| {
+    engine.register_fn("set_compiler", |target: &mut KProject, compiler: String| {
         target.compiler = compiler;
     });
 
-    engine.register_fn("set_linker", |target: &mut Target, linker: String| {
+    engine.register_fn("set_linker", |target: &mut KProject, linker: String| {
         target.linker = linker;
     });
 
@@ -201,12 +206,6 @@ fn main() {
     let fn_args = args.clone();
     engine.register_fn("get_build_options", move || match fn_args.clone().command {
         Command::Build(config) => config
-            .options
-            .unwrap_or(vec![])
-            .into_iter()
-            .map(Dynamic::from)
-            .collect(),
-        Command::Run(config) => config
             .options
             .unwrap_or(vec![])
             .into_iter()
@@ -233,138 +232,20 @@ fn main() {
         }
 
         Command::Build(config) => {
-            build_project(&mut project, config.no_output);
+            build_project(&mut project, config);
         }
-
-        Command::Run(_config) => {
-            log!(OOPS, "Coming soon, sorry");
-        }
-
-        Command::Install { targets } => project
-            .targets
-            .iter()
-            .filter(|target| {
-                targets
-                    .clone()
-                    .unwrap_or(project.targets.iter().map(|t| t.name.clone()).collect())
-                    .contains(&target.name)
-            })
-            .for_each(|target| {
-                log!(INFO, "Installing target {}", target.name);
-                install_target(target, "./build".to_string());
-            }),
     }
 }
 
-fn install_target(target: &Target, build_directory: String) {
-    if target.install_directory.is_none() {
-        return;
-    }
+fn build_project(target: &KProject, config: RBConfig) -> () {
+    let output_file = if target.r#type == "static".to_string() {
+        format!("{}.a", target.name.to_lowercase())
+    } else {
+        target.name.clone().to_lowercase()
+    };
 
-    if !fs::exists(build_directory.as_str()).log_expect("Failed to get project directory state") {
-        log!(PANIC, "Can't access project build directory");
-    }
-
-    if !fs::exists(
-        target
-            .install_directory
-            .clone()
-            .log_unwrap("Installation directory did not set"),
-    )
-    .log_expect("Failed to get install directory state")
-    {
-        log!(PANIC, "Can't access install directory");
-    }
-
-    fs::copy(
-        build_directory.as_str(),
-        format!(
-            "{}/{}",
-            target.install_directory.clone().unwrap(),
-            target.name
-        ),
-    )
-    .log_expect("Failed to copy target");
-}
-
-fn build_project(project: &mut KProject, no_output: bool) -> () {
-    println!("Building project '{}'", project.name);
-    log!(INFO, "Building project {}", project.name);
-
-    project.targets.iter_mut().for_each(|target| {
-        log!(INFO, "Target '{}'", target.name);
-        target.language = Some(
-            target
-                .language
-                .as_ref()
-                .unwrap_or(&String::from("c"))
-                .to_string(),
-        );
-
-        if target.language != Some(String::from("c"))
-            && target.language != Some(String::from("cpp"))
-        {
-            log!(
-                PANIC,
-                "SBS only supports C(c) and C++(cpp), not '{}' at target {}",
-                target.language.as_ref().unwrap(),
-                target.name
-            );
-        }
-
-        log!(INFO, "Target language ok");
-
-        if target.r#type.is_none() {
-            target.r#type = Some(String::from("binary"))
-        } else if target.r#type != Some(String::from("binary"))
-            && target.r#type != Some(String::from("static"))
-        {
-            log!(
-                PANIC,
-                "SBS only supports binary and static output type, not '{}' at target {}",
-                target.r#type.as_ref().unwrap(),
-                target.name
-            );
-        }
-
-        log!(INFO, "Target type ok");
-    });
-
-    log!(INFO, "Targets ok");
-
-    project
-        .targets
-        .iter()
-        .enumerate()
-        .for_each(|(index, target)| {
-            println!(
-                "[{}%] Building target {}",
-                ((index as f32 / project.targets.len() as f32) * 100f32) as i32,
-                target.name
-            );
-
-            let output_file = if target.r#type == Some("binary".to_string()) {
-                target.name.clone()
-            } else {
-                format!("lib{}.a", target.name)
-            };
-
-            log!(INFO, "Target's output file ready");
-
-            build_target(target, output_file.clone(), no_output);
-
-            println!(
-                "[{}%] Built target {} ({}/{})",
-                ((index as f32 + 1f32) / (project.targets.len()) as f32 * 100f32) as i32,
-                target.name,
-                index + 1,
-                project.targets.len(),
-            );
-        });
-}
-
-fn build_target(target: &Target, output_file: String, no_output: bool) -> () {
     log!(INFO, "Building target '{}'", target.name);
+    println!("Compiling {}...", target.name);
     let files = target
         .sources
         .iter()
@@ -388,16 +269,14 @@ fn build_target(target: &Target, output_file: String, no_output: bool) -> () {
                 .to_string_lossy()
                 .to_owned();
 
-            println!(
-                "[{}%] Building object {}",
-                (index as f32 / (target.sources.len() as f32 - 1f32) * 100f32) as i32,
-                name_only
-            );
-
             std::fs::create_dir_all(format!("build/{}-target", target.name))
                 .log_expect("Failed to create output directory");
 
             log!(INFO, "Building object {}", target.name);
+
+            if config.verbose {
+                println!("Precompiling object {}", name_only);
+            }
 
             let output = process::Command::new(target.compiler.clone())
                 .args([
@@ -410,7 +289,7 @@ fn build_target(target: &Target, output_file: String, no_output: bool) -> () {
                 .output()
                 .log_expect(format!("Failed to execute compiler: {:?}", target.compiler).as_str());
 
-            if !no_output {
+            if !config.no_output {
                 print!(
                     "{}",
                     String::from_utf8(output.stdout.clone())
@@ -436,8 +315,7 @@ fn build_target(target: &Target, output_file: String, no_output: bool) -> () {
             }
         });
 
-    println!("[LINK] Linking target {}...", target.name);
-    log!(INFO, "Linking target {}", target.name);
+    println!("Building {} {}", target.name, target.version);
 
     let object_files = files
         .iter()
@@ -445,7 +323,7 @@ fn build_target(target: &Target, output_file: String, no_output: bool) -> () {
         .collect::<Vec<String>>();
 
     let output: Output;
-    if target.r#type == Some(String::from("static")) {
+    if target.r#type == String::from("static") {
         output = process::Command::new("ar")
             .args(["rcs", format!("build/{output_file}").as_str()])
             .args(object_files)
@@ -461,7 +339,7 @@ fn build_target(target: &Target, output_file: String, no_output: bool) -> () {
             .log_expect(format!("Failed to execute linker: {:?}", target.linker).as_str());
     }
 
-    if !no_output {
+    if !config.no_output {
         print!(
             "{}",
             String::from_utf8(output.stdout.clone()).log_expect("Uncorrected UTF-8 output format")
