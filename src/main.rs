@@ -1,24 +1,24 @@
+pub mod cmdrhai;
 pub mod expect;
+pub mod langscript;
 pub mod macros;
+pub mod to_array;
 pub mod unwrap;
 
-use std::{
-    fs,
-    path::Path,
-    process::{self, Output},
-};
+use std::{fs, path::Path};
 
 use clap::{Parser, Subcommand};
 
 use expect::SBSExpect;
-use unwrap::SBSUnwrap;
 
 use glob::glob;
 
 use rhai::{Array, CustomType, Dynamic, Engine, EvalAltResult, Position, TypeBuilder};
 
-#[derive(Parser, Clone, Debug, PartialEq)]
-struct RBConfig {
+use crate::langscript::build_project;
+
+#[derive(Parser, Clone, Debug, PartialEq, CustomType)]
+pub struct RBConfig {
     /// Do not show compiler and linker output
     #[arg(long)]
     no_output: bool,
@@ -64,7 +64,7 @@ struct Cmd {
 }
 
 #[derive(Default, CustomType, Clone, Debug)]
-struct KProject {
+pub struct KProject {
     name: String,
     version: String,
     language: String,
@@ -73,11 +73,6 @@ struct KProject {
     link_args: Vec<String>,
 
     sources: Vec<String>,
-
-    install_directory: Option<String>,
-
-    compiler: String,
-    linker: String,
 
     r#type: String,
 }
@@ -103,41 +98,17 @@ fn main() {
 
     engine.register_fn(
         "init_project",
-        |name: String, version: String, language: String| {
-            let mut target: KProject = KProject::default();
+        |name: String, version: String, language: String| KProject {
+            name,
+            version,
 
-            target.name = name;
-            target.version = version;
+            sources: vec![],
+            compile_args: vec![],
+            link_args: vec![],
 
-            target.sources = vec![];
-            target.compile_args = vec![];
-            target.link_args = vec![];
+            language,
 
-            target.compiler = "clang".to_string();
-            target.linker = "clang".to_string();
-
-            target.language = language;
-
-            target
-        },
-    );
-
-    engine.register_fn(
-        "init_project",
-        |name: String, version: String, language: String, r#type: String| {
-            let mut project = KProject::default();
-
-            project.name = name;
-            project.version = version;
-
-            project.language = language;
-
-            project.compiler = "clang".to_string();
-            project.linker = "clang".to_string();
-
-            project.r#type = r#type;
-
-            project
+            ..KProject::default()
         },
     );
 
@@ -180,21 +151,6 @@ fn main() {
         },
     );
 
-    engine.register_fn(
-        "set_installation_path",
-        |target: &mut KProject, installation_path: String| {
-            target.install_directory = Some(installation_path);
-        },
-    );
-
-    engine.register_fn("set_compiler", |target: &mut KProject, compiler: String| {
-        target.compiler = compiler;
-    });
-
-    engine.register_fn("set_linker", |target: &mut KProject, linker: String| {
-        target.linker = linker;
-    });
-
     engine.register_fn("filter_dir", |pattern: String| {
         glob(pattern.as_str())
             .log_expect("Invalid pattern")
@@ -216,8 +172,8 @@ fn main() {
 
     log!(INFO, "Running engine");
 
-    let mut project = engine
-        .eval_file(Path::new(args.config.as_str()).to_path_buf())
+    let project = engine
+        .eval_file::<KProject>(Path::new(args.config.as_str()).to_path_buf())
         .log_expect("Failed to run project file");
 
     log!(INFO, "Engine done");
@@ -232,132 +188,8 @@ fn main() {
         }
 
         Command::Build(config) => {
-            build_project(&mut project, config);
+            build_project(project, config);
+            println!("Build finished");
         }
-    }
-}
-
-fn build_project(target: &KProject, config: RBConfig) -> () {
-    let output_file = if target.r#type == "static".to_string() {
-        format!("{}.a", target.name.to_lowercase())
-    } else {
-        target.name.clone().to_lowercase()
-    };
-
-    log!(INFO, "Building target '{}'", target.name);
-    println!("Compiling {}...", target.name);
-    let files = target
-        .sources
-        .iter()
-        .map(|f| {
-            Path::new(f)
-                .file_name()
-                .log_unwrap("Can't get filename")
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect::<Vec<String>>();
-
-    target
-        .sources
-        .iter()
-        .enumerate()
-        .for_each(|(index, source)| {
-            let name_only = Path::new(source)
-                .file_name()
-                .log_unwrap("Path resolution error")
-                .to_string_lossy()
-                .to_owned();
-
-            std::fs::create_dir_all(format!("build/{}-target", target.name))
-                .log_expect("Failed to create output directory");
-
-            log!(INFO, "Building object {}", target.name);
-
-            if config.verbose {
-                println!("Precompiling object {}", name_only);
-            }
-
-            let output = process::Command::new(target.compiler.clone())
-                .args([
-                    "-c",
-                    source.as_str(),
-                    "-o",
-                    format!("build/{}-target/{}.o", target.name, name_only).as_str(),
-                ])
-                .args(target.compile_args.clone())
-                .output()
-                .log_expect(format!("Failed to execute compiler: {:?}", target.compiler).as_str());
-
-            if !config.no_output {
-                print!(
-                    "{}",
-                    String::from_utf8(output.stdout.clone())
-                        .log_expect("Uncorrected UTF-8 output format"),
-                );
-
-                print!(
-                    "{}",
-                    String::from_utf8(output.stderr.clone())
-                        .log_expect("Uncorrected UTF-8 output format"),
-                );
-            }
-
-            if !output.status.success() {
-                log!(
-                    PANIC,
-                    "Compiler panicked with status {}",
-                    output
-                        .status
-                        .code()
-                        .log_unwrap("Failed to get compile exit code")
-                );
-            }
-        });
-
-    println!("Building {} {}", target.name, target.version);
-
-    let object_files = files
-        .iter()
-        .map(|filename| format!("build/{}-target/{}.o", target.name, filename))
-        .collect::<Vec<String>>();
-
-    let output: Output;
-    if target.r#type == String::from("static") {
-        output = process::Command::new("ar")
-            .args(["rcs", format!("build/{output_file}").as_str()])
-            .args(object_files)
-            .args(target.link_args.clone())
-            .output()
-            .log_expect("Failed to execute linker: ar rcs");
-    } else {
-        output = process::Command::new(target.linker.clone())
-            .args(object_files)
-            .args(["-o", format!("build/{output_file}").as_str()])
-            .args(target.link_args.clone())
-            .output()
-            .log_expect(format!("Failed to execute linker: {:?}", target.linker).as_str());
-    }
-
-    if !config.no_output {
-        print!(
-            "{}",
-            String::from_utf8(output.stdout.clone()).log_expect("Uncorrected UTF-8 output format")
-        );
-        print!(
-            "{}",
-            String::from_utf8(output.stderr.clone()).log_expect("Uncorrected UTF-8 output format")
-        );
-    }
-
-    if !output.status.success() {
-        log!(
-            PANIC,
-            "Linker panicked with status {}",
-            output
-                .status
-                .code()
-                .log_unwrap("Failed to get linker exit code")
-        );
     }
 }
