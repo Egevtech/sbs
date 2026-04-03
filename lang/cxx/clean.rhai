@@ -1,0 +1,3 @@
+fn clean() {
+    rmdir("build/");
+}

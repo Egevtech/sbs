@@ -1,7 +1,7 @@
 fn build_project(project, config) {
     print(`Building ${project.name} ${project.version}...`);
 
-    let compiler = "clang";
+    let compiler = "clang++";
 
     let objects = [];
 

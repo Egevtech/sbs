@@ -5,7 +5,7 @@ pub mod macros;
 pub mod to_array;
 pub mod unwrap;
 
-use std::{fs, path::Path};
+use std::path::Path;
 
 use clap::{Parser, Subcommand};
 
@@ -15,7 +15,7 @@ use glob::glob;
 
 use rhai::{Array, CustomType, Dynamic, Engine, EvalAltResult, Position, TypeBuilder};
 
-use crate::langscript::build_project;
+use crate::langscript::{build_project, clean_project};
 
 #[derive(Parser, Clone, Debug, PartialEq, CustomType)]
 pub struct RBConfig {
@@ -74,6 +74,8 @@ pub struct KProject {
 
     sources: Vec<String>,
 
+    lib_headers: Vec<String>,
+
     r#type: String,
 }
 
@@ -122,6 +124,21 @@ fn main() {
                     .filter_map(|source| source.try_cast::<String>())
                     .collect(),
             );
+        },
+    );
+
+    engine.register_fn("add_lib_header", |target: &mut KProject, header: String| {
+        target.lib_headers.push(header);
+    });
+
+    engine.register_fn(
+        "add_lib_headers",
+        |target: &mut KProject, headers: rhai::Array| {
+            headers
+                .clone()
+                .into_iter()
+                .filter_map(|header| header.try_cast::<String>())
+                .for_each(|header| target.lib_headers.push(header));
         },
     );
 
@@ -184,7 +201,7 @@ fn main() {
     log!(INFO, "Matching commands...");
     match args.command {
         Command::Clean => {
-            fs::remove_dir_all("./build").log_expect("Failed to remove build directory");
+            clean_project(project);
         }
 
         Command::Build(config) => {
