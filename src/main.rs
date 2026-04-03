@@ -16,6 +16,8 @@ use glob::glob;
 
 use rhai::{Array, CustomType, Dynamic, Engine, EvalAltResult, Position, TypeBuilder};
 
+use fs_extra::dir::{CopyOptions, copy};
+
 use crate::langscript::{build_project, clean_project};
 
 #[derive(Parser, Clone, Debug, PartialEq, CustomType)]
@@ -228,27 +230,43 @@ fn main() {
 
     log!(INFO, "Engine done");
 
-    log!(INFO, "Resolving dependencies");
-
     for dependency in project.clone().local_dependencies {
         log!(INFO, "Local dependency {}", dependency);
 
+        let dependency_name = Path::new(dependency.as_str())
+            .file_name()
+            .log_unwrap("Path resolution error")
+            .to_string_lossy()
+            .to_string();
+
+        std::fs::create_dir_all(format!("build/src/{}", dependency_name))
+            .log_expect("Can't create dependency directory");
+
+        copy(
+            dependency,
+            "build/src/",
+            &CopyOptions::new().overwrite(true),
+        )
+        .log_expect("Failed to fetch dependency");
+
         let mut dependecy_project: KProject = engine
             .eval_file::<KProject>(
-                Path::new(format!("{}/sbs.rhai", dependency).as_str()).to_path_buf(),
+                Path::new(format!("build/src/{}/sbs.rhai", dependency_name).as_str()).to_path_buf(),
             )
             .log_expect("Failed to run dependency project file");
+
+        println!("Updating {}...", dependecy_project.name);
 
         dependecy_project.sources = dependecy_project
             .sources
             .iter_mut()
-            .map(|x| format!("{}/{}", dependency, x))
+            .map(|x| format!("build/src/{}/{}", dependency_name, x))
             .collect::<Vec<String>>();
 
         dependecy_project.lib_headers = dependecy_project
             .lib_headers
             .iter_mut()
-            .map(|x| format!("{}/{}", dependency, x))
+            .map(|x| format!("build/src/{}/{}", dependency_name, x))
             .collect::<Vec<String>>();
 
         dependecy_project.prepare_outputs();
