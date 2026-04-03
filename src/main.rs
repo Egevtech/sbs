@@ -10,6 +10,7 @@ use std::path::Path;
 use clap::{Parser, Subcommand};
 
 use expect::SBSExpect;
+use unwrap::SBSUnwrap;
 
 use glob::glob;
 
@@ -73,8 +74,13 @@ pub struct KProject {
     link_args: Vec<String>,
 
     sources: Vec<String>,
+    outputs: Vec<String>,
 
     lib_headers: Vec<String>,
+
+    additional_files: Vec<String>,
+
+    local_dependencies: Vec<String>,
 
     r#type: String,
 }
@@ -86,6 +92,22 @@ impl KProject {
 
     fn add_sources(&mut self, sources: Vec<String>) {
         self.sources.extend(sources);
+    }
+
+    fn prepare_outputs(&mut self) {
+        self.outputs = self
+            .sources
+            .clone()
+            .iter_mut()
+            .map(|x| {
+                String::from(
+                    std::path::Path::new(x)
+                        .file_name()
+                        .log_unwrap("Path resolution error")
+                        .to_string_lossy(),
+                ) + ".o"
+            })
+            .collect::<Vec<String>>();
     }
 }
 
@@ -124,6 +146,13 @@ fn main() {
                     .filter_map(|source| source.try_cast::<String>())
                     .collect(),
             );
+        },
+    );
+
+    engine.register_fn(
+        "add_local_dependency",
+        |target: &mut KProject, path: String| {
+            target.local_dependencies.push(path);
         },
     );
 
@@ -189,11 +218,50 @@ fn main() {
 
     log!(INFO, "Running engine");
 
-    let project = engine
+    let mut dependencies: Vec<KProject> = Vec::new();
+
+    let mut project = engine
         .eval_file::<KProject>(Path::new(args.config.as_str()).to_path_buf())
         .log_expect("Failed to run project file");
 
+    project.prepare_outputs();
+
     log!(INFO, "Engine done");
+
+    log!(INFO, "Resolving dependencies");
+
+    for dependency in project.clone().local_dependencies {
+        log!(INFO, "Local dependency {}", dependency);
+
+        let mut dependecy_project: KProject = engine
+            .eval_file::<KProject>(
+                Path::new(format!("{}/sbs.rhai", dependency).as_str()).to_path_buf(),
+            )
+            .log_expect("Failed to run dependency project file");
+
+        dependecy_project.sources = dependecy_project
+            .sources
+            .iter_mut()
+            .map(|x| format!("{}/{}", dependency, x))
+            .collect::<Vec<String>>();
+
+        dependecy_project.lib_headers = dependecy_project
+            .lib_headers
+            .iter_mut()
+            .map(|x| format!("{}/{}", dependency, x))
+            .collect::<Vec<String>>();
+
+        dependecy_project.prepare_outputs();
+
+        dependecy_project.outputs.iter().for_each(|output| {
+            project.additional_files.push(format!(
+                "build/{}-target/{}",
+                dependecy_project.name, output
+            ));
+        });
+
+        dependencies.push(dependecy_project);
+    }
 
     #[cfg(debug_assertions)]
     println!("{:#?}", project);
@@ -205,6 +273,10 @@ fn main() {
         }
 
         Command::Build(config) => {
+            for dep in dependencies {
+                build_project(dep, config.clone());
+            }
+
             build_project(project, config);
             println!("Build finished");
         }

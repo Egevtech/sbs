@@ -20,6 +20,8 @@ pub struct EProject {
     pub header_outputs: Array,
 
     pub sources: Array,
+
+    pub additional_files: Array,
     pub outputs: Array,
 }
 
@@ -50,20 +52,8 @@ impl EProject {
                 .collect::<Vec<String>>()
                 .to_array(),
 
-            outputs: project
-                .sources
-                .clone()
-                .iter_mut()
-                .map(|x| {
-                    String::from(
-                        std::path::Path::new(x)
-                            .file_name()
-                            .log_unwrap("Path resolution error")
-                            .to_string_lossy(),
-                    ) + ".o"
-                })
-                .collect::<Vec<String>>()
-                .to_array(),
+            additional_files: project.additional_files.to_array(),
+            outputs: project.outputs.to_array(),
         }
     }
 }

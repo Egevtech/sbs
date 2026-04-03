@@ -21,6 +21,9 @@ fn build_project(project, config) {
         }
     }
 
+    for af in project.additional_files {
+        objects += af;
+    }
 
     let args = ["-o", "build/" + project.name];
 
@@ -30,6 +33,7 @@ fn build_project(project, config) {
     let result = cmd(compiler, args);
 
     if !(result == 0) {
+        print(`Linking failed with args ${args}`);
         return -1;
     }
 

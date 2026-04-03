@@ -1,5 +1,5 @@
 fn build_project(project, config) {
-    print(`Building ${project.name} ${project.version}`);
+    print(`Building ${project.name} ${project.version}...`);
 
     let objects = [];
 
@@ -17,6 +17,10 @@ fn build_project(project, config) {
 
             return -1;
         }
+    }
+
+    for af in project.additional_files {
+        objects += af;
     }
 
     let args = ["rcs", "build/lib" + project.name + ".a"];
