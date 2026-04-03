@@ -45,8 +45,8 @@ enum Command {
     /// Just build the project
     Build(RBConfig),
 
-    /// Build project, then run its default target
-    // Run(RBConfig),
+    /// Compile project dependencies
+    Update(RBConfig),
 
     /// Remove build directory
     Clean,
@@ -279,6 +279,12 @@ fn main() {
 
             build_project(project, config);
             println!("Build finished");
+        }
+
+        Command::Update(config) => {
+            for dep in dependencies {
+                build_project(dep, config.clone());
+            }
         }
     }
 }
