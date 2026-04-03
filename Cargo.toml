@@ -1,6 +1,6 @@
 [package]
 name = "sbs"
-version = "0.0.3-beta"
+version = "0.0.5-beta"
 edition = "2024"
 license = "BSD-3"
 description = "Small Build System written in rust"
