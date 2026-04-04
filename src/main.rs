@@ -18,7 +18,7 @@ use rhai::{Array, CustomType, Dynamic, Engine, EvalAltResult, Position, TypeBuil
 
 use fs_extra::dir::{CopyOptions, copy};
 
-use crate::langscript::{build_project, clean_project};
+use crate::langscript::build_project;
 
 #[derive(Parser, Clone, Debug, PartialEq, CustomType)]
 pub struct RBConfig {
@@ -116,10 +116,140 @@ impl KProject {
 fn main() {
     let args: Cmd = Cmd::parse();
 
+    if args.command == Command::Clean {
+        fs_extra::dir::remove("build").log_expect("Failed to remove build directory");
+        return;
+    }
+
     log!(INFO, "Starting engine");
     let mut engine: Engine = Engine::new();
 
+    engine = reg_engine(engine);
+
     log!(INFO, "Registering types and functions...");
+
+    let fn_args = args.clone();
+    engine.register_fn("get_build_options", move || match fn_args.clone().command {
+        Command::Build(config) => config
+            .options
+            .unwrap_or(vec![])
+            .into_iter()
+            .map(Dynamic::from)
+            .collect(),
+        _ => Array::new(),
+    });
+
+    log!(INFO, "Running engine");
+
+    let mut project = engine
+        .eval_file::<KProject>(Path::new(args.config.as_str()).to_path_buf())
+        .log_expect("Failed to run project file");
+
+    project.prepare_outputs();
+
+    log!(INFO, "Engine done");
+
+    let mut dependencies: Vec<KProject> = vec![];
+    let mut tr = process_dependencies(&project);
+
+    dependencies.append(&mut tr.0);
+    project.additional_files.append(&mut tr.1);
+
+    #[cfg(debug_assertions)]
+    println!("{:#?}", project);
+
+    log!(INFO, "Matching commands...");
+    match args.command {
+        Command::Build(config) => {
+            for dep in dependencies {
+                build_project(dep, config.clone());
+            }
+
+            build_project(project, config);
+            println!("Build finished");
+        }
+
+        Command::Update(config) => {
+            for dep in dependencies {
+                build_project(dep, config.clone());
+            }
+        }
+
+        _ => {}
+    }
+}
+
+fn process_dependencies(project: &KProject) -> (Vec<KProject>, Vec<String>) {
+    let mut dependencies: Vec<KProject> = vec![];
+    let mut additional_files: Vec<String> = vec![];
+
+    let mut engine = Engine::new();
+
+    engine = reg_engine(engine);
+
+    for dependency in project.clone().local_dependencies {
+        log!(INFO, "Local dependency {}", dependency);
+
+        let dependency_name = Path::new(dependency.as_str())
+            .file_name()
+            .log_unwrap("Path resolution error")
+            .to_string_lossy()
+            .to_string();
+
+        std::fs::create_dir_all(format!("build/src/{}", dependency_name))
+            .log_expect("Can't create dependency directory");
+
+        copy(
+            dependency,
+            "build/src/",
+            &CopyOptions::new().overwrite(true),
+        )
+        .log_expect("Failed to fetch dependency");
+
+        fs_extra::dir::remove(format!("build/src/{}/build", dependency_name))
+            .log_expect("Failed to clean fetched project");
+
+        let mut dependecy_project: KProject = engine
+            .eval_file::<KProject>(
+                Path::new(format!("build/src/{}/sbs.rhai", dependency_name).as_str()).to_path_buf(),
+            )
+            .log_expect("Failed to run dependency project file");
+
+        println!("Updating {}...", dependecy_project.name);
+
+        dependecy_project.sources = dependecy_project
+            .sources
+            .iter_mut()
+            .map(|x| format!("build/src/{}/{}", dependency_name, x))
+            .collect::<Vec<String>>();
+
+        dependecy_project.lib_headers = dependecy_project
+            .lib_headers
+            .iter_mut()
+            .map(|x| format!("build/src/{}/{}", dependency_name, x))
+            .collect::<Vec<String>>();
+
+        dependecy_project.prepare_outputs();
+
+        dependecy_project.outputs.iter().for_each(|output| {
+            additional_files.push(format!(
+                "build/{}-target/{}",
+                dependecy_project.name, output
+            ));
+        });
+
+        let mut tr = process_dependencies(&dependecy_project);
+
+        dependencies.append(&mut tr.0);
+        additional_files.append(&mut tr.1);
+
+        dependencies.push(dependecy_project);
+    }
+
+    (dependencies, additional_files)
+}
+
+fn reg_engine(mut engine: Engine) -> Engine {
     engine.build_type::<KProject>();
 
     engine.register_fn(
@@ -207,102 +337,5 @@ fn main() {
             .collect::<Vec<Dynamic>>()
     });
 
-    let fn_args = args.clone();
-    engine.register_fn("get_build_options", move || match fn_args.clone().command {
-        Command::Build(config) => config
-            .options
-            .unwrap_or(vec![])
-            .into_iter()
-            .map(Dynamic::from)
-            .collect(),
-        _ => Array::new(),
-    });
-
-    log!(INFO, "Running engine");
-
-    let mut dependencies: Vec<KProject> = Vec::new();
-
-    let mut project = engine
-        .eval_file::<KProject>(Path::new(args.config.as_str()).to_path_buf())
-        .log_expect("Failed to run project file");
-
-    project.prepare_outputs();
-
-    log!(INFO, "Engine done");
-
-    for dependency in project.clone().local_dependencies {
-        log!(INFO, "Local dependency {}", dependency);
-
-        let dependency_name = Path::new(dependency.as_str())
-            .file_name()
-            .log_unwrap("Path resolution error")
-            .to_string_lossy()
-            .to_string();
-
-        std::fs::create_dir_all(format!("build/src/{}", dependency_name))
-            .log_expect("Can't create dependency directory");
-
-        copy(
-            dependency,
-            "build/src/",
-            &CopyOptions::new().overwrite(true),
-        )
-        .log_expect("Failed to fetch dependency");
-
-        let mut dependecy_project: KProject = engine
-            .eval_file::<KProject>(
-                Path::new(format!("build/src/{}/sbs.rhai", dependency_name).as_str()).to_path_buf(),
-            )
-            .log_expect("Failed to run dependency project file");
-
-        println!("Updating {}...", dependecy_project.name);
-
-        dependecy_project.sources = dependecy_project
-            .sources
-            .iter_mut()
-            .map(|x| format!("build/src/{}/{}", dependency_name, x))
-            .collect::<Vec<String>>();
-
-        dependecy_project.lib_headers = dependecy_project
-            .lib_headers
-            .iter_mut()
-            .map(|x| format!("build/src/{}/{}", dependency_name, x))
-            .collect::<Vec<String>>();
-
-        dependecy_project.prepare_outputs();
-
-        dependecy_project.outputs.iter().for_each(|output| {
-            project.additional_files.push(format!(
-                "build/{}-target/{}",
-                dependecy_project.name, output
-            ));
-        });
-
-        dependencies.push(dependecy_project);
-    }
-
-    #[cfg(debug_assertions)]
-    println!("{:#?}", project);
-
-    log!(INFO, "Matching commands...");
-    match args.command {
-        Command::Clean => {
-            clean_project(project);
-        }
-
-        Command::Build(config) => {
-            for dep in dependencies {
-                build_project(dep, config.clone());
-            }
-
-            build_project(project, config);
-            println!("Build finished");
-        }
-
-        Command::Update(config) => {
-            for dep in dependencies {
-                build_project(dep, config.clone());
-            }
-        }
-    }
+    engine
 }
