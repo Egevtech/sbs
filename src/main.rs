@@ -124,7 +124,7 @@ fn main() {
     log!(INFO, "Starting engine");
     let mut engine: Engine = Engine::new();
 
-    engine = reg_engine(engine);
+    engine = reg_engine(engine, String::from("."));
 
     log!(INFO, "Registering types and functions...");
 
@@ -183,11 +183,11 @@ fn process_dependencies(project: &KProject) -> (Vec<KProject>, Vec<String>) {
     let mut dependencies: Vec<KProject> = vec![];
     let mut additional_files: Vec<String> = vec![];
 
-    let mut engine = Engine::new();
-
-    engine = reg_engine(engine);
-
     for dependency in project.clone().local_dependencies {
+        let mut engine = Engine::new();
+
+        engine = reg_engine(engine, String::from(dependency.clone()));
+
         log!(INFO, "Local dependency {}", dependency);
 
         let dependency_name = Path::new(dependency.as_str())
@@ -249,7 +249,7 @@ fn process_dependencies(project: &KProject) -> (Vec<KProject>, Vec<String>) {
     (dependencies, additional_files)
 }
 
-fn reg_engine(mut engine: Engine) -> Engine {
+fn reg_engine(mut engine: Engine, path: String) -> Engine {
     engine.build_type::<KProject>();
 
     engine.register_fn(
@@ -329,8 +329,8 @@ fn reg_engine(mut engine: Engine) -> Engine {
         },
     );
 
-    engine.register_fn("filter_dir", |pattern: String| {
-        glob(pattern.as_str())
+    engine.register_fn("filter_dir", move |pattern: String| {
+        glob(format!("{}/{}", path, pattern).as_str())
             .log_expect("Invalid pattern")
             .map(|gr| gr.log_expect("Invalid pattern (l2)").display().to_string())
             .map(Dynamic::from)
